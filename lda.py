@@ -1,16 +1,12 @@
 # Perform LDA on the abstracts of the downloaded papers to obtain weak
 # supervision signal for the RNN.
 
-import os
 import pickle
-import argparse
-import time
-import glob
 import string
-import csv
 from nltk.corpus import stopwords
 from gensim import corpora
 from gensim.models.ldamodel import LdaModel
+from data_utils import *
 
 def tokenize_abstracts(db, abs_dir, abs_dir_tok):
 	"""
@@ -30,13 +26,7 @@ def tokenize_abstracts(db, abs_dir, abs_dir_tok):
 		os.system("./abstracts.sh")
 		print("Created tokenized abstracts in %s. Time taken: %.2f seconds."%(abs_dir_tok, time.time()-start))
 	# load tokenized abstracts into memory as a list
-	fnames = []
-	abstracts = []
-	for file in glob.glob(abs_dir_tok + "/*"):
-		with open(file, "r") as f:
-			abstracts.append(f.read())
-			fnames.append(os.path.basename(f.name))
-	return(fnames, abstracts)
+	return load_abstracts(abs_dir_tok)
 
 def create_corpus(tokenized_abstracts):
 	"""
