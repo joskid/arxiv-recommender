@@ -34,7 +34,7 @@ class RNN():
 		self.config = config
 		self.pretrained_embeddings = pretrained_embeddings
 		self.add_placeholders()
-		self.logits = self.add_prediction_op()
+		self.logits, self.states = self.add_prediction_op()
 		self.loss = self.add_loss_op(self.logits)
 		self.train_op = self.add_training_op(self.loss)
 
@@ -46,7 +46,7 @@ class RNN():
 		self.abstracts_placeholder = tf.placeholder(tf.int32, shape=(None, self.config.max_length))
 		self.lengths_placeholder = tf.placeholder(tf.int32, shape=(None,))
 		self.labels_placeholder = tf.placeholder(tf.int32, shape=(None,))
-		self.dropout_placeholder = tf.placeholder(tf.float32)
+		self.dropout_placeholder = tf.placeholder(tf.float64)
 
 	def create_feed_dict(self, abstracts_batch, lengths_batch, labels_batch=None, dropout_rate=1):
 		"""
@@ -72,7 +72,7 @@ class RNN():
 		"""
 		Adds one layer of LSTM cells that computes a hidden state vector for each full pass of
 		an abstract, and uses the hidden state vector to compute softmax logit scores for the
-		classification labels (0 to 9).
+		classification labels (0 to 9). Returns both the logits and the hidden state vectors.
 		"""
 		x = self.add_embedding_op()
 		batch_size = tf.shape(x)[0]
@@ -84,9 +84,10 @@ class RNN():
 											initializer = tf.contrib.layers.xavier_initializer())
 		outputs, states = tf.nn.dynamic_rnn(cell, inputs=x, sequence_length=self.lengths_placeholder, initial_state=init_state, dtype=tf.float64)
 		# use the hidden state (corresponding to states[1]) when calculating logits
-		logits = tf.matmul(states[1], U)
+		states_drop = tf.nn.dropout(states[1], self.dropout_placeholder)
+		logits = tf.matmul(states_drop, U)
 
-		return logits
+		return (logits, states[1])
 
 	def add_loss_op(self, logits):
 		"""
@@ -123,6 +124,14 @@ class RNN():
 		predictions = sess.run(tf.argmax(self.logits, axis=1), feed_dict)
 		return predictions
 
+	def get_states_on_batch(self, sess, abstracts_batch, lengths_batch):
+		"""
+		Gets the final hidden state vector of the RNN for all input abstracts.
+		"""
+		feed_dict = self.create_feed_dict(abstracts_batch, lengths_batch)
+		states = sess.run(self.states, feed_dict)
+		return np.array(states)
+
 def preprocess_data(topics_file, labels_file, abstracts_file, embeddings_file, max_length):
 	"""
 	Helper function to load and preprocess data for the RNN. Returns the padded, vectorized
@@ -140,7 +149,7 @@ def preprocess_data(topics_file, labels_file, abstracts_file, embeddings_file, m
 	vectorized_abstracts = vectorize_abstracts(new_abstracts, new_vocab)
 	return(vectorized_abstracts, orig_lengths, labels, new_embeddings)
 
-def split_data(abstracts, lengths, labels, train_ratio=0.9):
+def split_data(abstracts, lengths, labels, train_ratio=0.99):
 	"""
 	Shuffles and splits the available data into training and validation sets.
 	"""
@@ -188,22 +197,62 @@ def save_loss(losses):
 			f.write("%s " % str(loss))
 		f.write("\n")
 
-def predict(abstracts, lengths, labels, embeddings):
+def predict(abstracts, lengths, labels, embeddings, get_states=False):
 	"""
 	Uses the trained model weights to make a prediction on the validation set.
+	If @get_states is set to True, obtains the final hidden state vector of 
+	the RNN for all input abstracts, instead of making predictions.
 	"""
 	tf.reset_default_graph()
 	print("Making predictions on validation set...")
 	config = Config()
 	rnn = RNN(config, embeddings)
+	
+	if get_states: 
+		requested_op = rnn.get_states_on_batch
+	else:
+		requested_op = rnn.predict_on_batch
 	saver = tf.train.Saver()
+	
+	with tf.Session() as session:
+		saver.restore(session, "./weights/model1")
+		out = requested_op(session, abstracts, lengths)
+	
+	if get_states:
+		return out
+	else:
+		accuracy = np.mean(out == labels)
+		return accuracy
+
+def get_all_states(abstracts, lengths, labels, embeddings):
+	"""
+	Uses the trained model weights to obtain the final hidden state vector
+	of the RNN for all abstracts. Differs from the predict() function in the
+	use of a generator here to prevent out-of-memory issues.
+	"""
+	tf.reset_default_graph()
+	print("Getting hidden state for all abstracts...")
+	config = Config()
+	rnn = RNN(config, embeddings)
+	saver = tf.train.Saver()
+	states = np.empty(shape=(0, config.hidden_size), dtype=float)
 
 	with tf.Session() as session:
 		saver.restore(session, "./weights/model1")
-		predictions = rnn.predict_on_batch(session, abstracts, lengths)
-	
-	accuracy = np.mean(predictions == labels)
-	return(accuracy)
+		prog = Progbar(target=1 + len(labels)/config.batch_size)
+		for i, batch in enumerate(get_minibatches(abstracts, lengths, labels, config.batch_size, shuffle=False)):
+			batch_states = rnn.get_states_on_batch(session, batch[0], batch[1])
+			states = np.append(states, batch_states, axis=0)
+			prog.update(i+1)
+	print("\n")
+	return states
+
+def save_states(states):
+	"""
+	Writes the final hidden state vector of the RNN for all input abstracts
+	into a text file.
+	"""
+	np.savetxt("hidden_states", states, delimiter=" ")
 
 if __name__ == "__main__":
 	start = time.time()
@@ -218,6 +267,8 @@ if __name__ == "__main__":
 
 	abstracts, lengths, labels, embeddings = preprocess_data(args.lda_topics, args.lda_assignments, args.abs_dir_tok, args.embeddings, args.max_length)
 	train_set, validation_set = split_data(abstracts, lengths, labels)
-	train(*train_set, embeddings)
-	print(predict(*validation_set, embeddings))
+	# train(*train_set, embeddings)
+	# states = predict(*validation_set, embeddings, get_states=True)
+	states = get_all_states(abstracts, lengths, labels, embeddings)
+	save_states(states)
 	print("Total time taken: %.2f" % (time.time()-start))
