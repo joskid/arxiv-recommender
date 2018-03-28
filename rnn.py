@@ -13,7 +13,7 @@ class Config:
 	RNN objects are passed a Config() object at instantiation, so any call to
 	the variables in Config should use self.config.variable_name.
 	"""
-	num_epochs = 10
+	num_epochs = 20
 	batch_size = 128
 	num_classes = 10
 	embed_size = 200
@@ -111,7 +111,17 @@ class RNN():
 		"""
 		# create the feed dictionary for this batch
 		feed_dict = self.create_feed_dict(abstracts_batch, lengths_batch, labels_batch, self.config.dropout_rate)
-		print(sess.run([self.train_op, self.loss], feed_dict))
+		_, loss = sess.run([self.train_op, self.loss], feed_dict)
+		return loss
+
+	def predict_on_batch(self, sess, abstracts_batch, lengths_batch):
+		"""
+		Makes predictions on one batch of abstracts.
+		"""
+		# create feed dictionary for this batch
+		feed_dict = self.create_feed_dict(abstracts_batch, lengths_batch)
+		predictions = sess.run(tf.argmax(self.logits, axis=1), feed_dict)
+		return predictions
 
 def preprocess_data(topics_file, labels_file, abstracts_file, embeddings_file, max_length):
 	"""
@@ -130,6 +140,21 @@ def preprocess_data(topics_file, labels_file, abstracts_file, embeddings_file, m
 	vectorized_abstracts = vectorize_abstracts(new_abstracts, new_vocab)
 	return(vectorized_abstracts, orig_lengths, labels, new_embeddings)
 
+def split_data(abstracts, lengths, labels, train_ratio=0.9):
+	"""
+	Shuffles and splits the available data into training and validation sets.
+	"""
+	indices = np.arange(len(abstracts))
+	np.random.shuffle(indices)
+	split_index = int(len(indices)*train_ratio)
+	# get indices for training and validation sets
+	train_indices = np.array(indices[ : split_index])
+	val_indices = np.array(indices[split_index : ])
+	# slice out training and validation sets, and return
+	train_set = (abstracts[train_indices], lengths[train_indices], labels[train_indices])
+	val_set =(abstracts[val_indices], lengths[val_indices], labels[val_indices])
+	return(train_set, val_set)
+
 def train(abstracts, lengths, labels, embeddings):
 	"""
 	Main loop that implements the training over all epochs.
@@ -138,14 +163,50 @@ def train(abstracts, lengths, labels, embeddings):
 	rnn = RNN(config, embeddings)
 	print("Initialized RNN object.")
 	init = tf.global_variables_initializer()
-
+	saver = tf.train.Saver()
+	print("===============================================================")
 	with tf.Session() as session:
 		session.run(init)
-		for abs_batch, len_batch, lab_batch in get_minibatches(abstracts, lengths, labels, config.batch_size):
-			rnn.train_on_batch(session, abs_batch, len_batch, lab_batch)
+		for epoch in range(config.num_epochs):
+			print("\nTraining epoch number %i of %i:" % (epoch+1, config.num_epochs))
+			prog = Progbar(target=1 + len(labels)/config.batch_size)
+			losses = []
+			for i, batch in enumerate(get_minibatches(abstracts, lengths, labels, config.batch_size)):
+				loss = rnn.train_on_batch(session, *batch)
+				losses.append(loss)
+				prog.update(i+1, [("Loss", loss)])
+				save_path = saver.save(session, "./weights/model2")
+			save_loss(losses)
+	print("\n\n===============================================================\n")		
+
+def save_loss(losses):
+	"""
+	Writes the training losses to a text file.
+	"""
+	with open("training_loss2", "a") as f:
+		for loss in losses:
+			f.write("%s " % str(loss))
+		f.write("\n")
+
+def predict(abstracts, lengths, labels, embeddings):
+	"""
+	Uses the trained model weights to make a prediction on the validation set.
+	"""
+	tf.reset_default_graph()
+	print("Making predictions on validation set...")
+	config = Config()
+	rnn = RNN(config, embeddings)
+	saver = tf.train.Saver()
+
+	with tf.Session() as session:
+		saver.restore(session, "./weights/model1")
+		predictions = rnn.predict_on_batch(session, abstracts, lengths)
+	
+	accuracy = np.mean(predictions == labels)
+	return(accuracy)
 
 if __name__ == "__main__":
-
+	start = time.time()
 	# get command line arguments
 	parser = argparse.ArgumentParser()
 	parser.add_argument("--lda-topics", type=str, default="lda_topics_final", help="lda_topics file")
@@ -156,4 +217,7 @@ if __name__ == "__main__":
 	args = parser.parse_args()	
 
 	abstracts, lengths, labels, embeddings = preprocess_data(args.lda_topics, args.lda_assignments, args.abs_dir_tok, args.embeddings, args.max_length)
-	train(abstracts, lengths, labels, embeddings)
+	train_set, validation_set = split_data(abstracts, lengths, labels)
+	train(*train_set, embeddings)
+	print(predict(*validation_set, embeddings))
+	print("Total time taken: %.2f" % (time.time()-start))
