@@ -149,7 +149,7 @@ def preprocess_data(topics_file, labels_file, abstracts_file, embeddings_file, m
 	vectorized_abstracts = vectorize_abstracts(new_abstracts, new_vocab)
 	return(vectorized_abstracts, orig_lengths, labels, new_embeddings)
 
-def split_data(abstracts, lengths, labels, train_ratio=0.99):
+def split_data(abstracts, lengths, labels, train_ratio=0.9):
 	"""
 	Shuffles and splits the available data into training and validation sets.
 	"""
