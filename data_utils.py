@@ -22,7 +22,7 @@ def load_embeddings(fpath):
 	(token, vector) pairs in an ordered dictionary.
 	"""
 	start = time.time()
-	print("Loading pre-trained GloVe word embeddings.")
+	print("Loading pre-trained GloVe word embeddings...")
 	embeddings = OrderedDict()
 	for line in open(fpath):
 		splitLine = line.split(" ")
@@ -32,7 +32,7 @@ def load_embeddings(fpath):
 	print("Finished loading embeddings. Time taken: %.2f seconds."%(time.time()-start))
 	return(embeddings)
 
-def load_embeddings_array(fpath):
+def load_embeddings_array(fpath, num_embed):
 	"""
 	Reads the SAVE_FILE produced by the GloVe model and returns the
 	vocabulary and vectors in separate arrays. 
@@ -41,8 +41,9 @@ def load_embeddings_array(fpath):
 	print("Loading pre-trained GloVe word embeddings.")
 	vocab = []
 	embeddings = []
-	for line in open(fpath):
-		splitLine = line.split(" ")
+	f = open(fpath)
+	for i in range(num_embed):
+		splitLine = f.readline().split(" ")
 		vocab.append(splitLine[0])
 		embeddings.append([float(value) for value in splitLine[1:]])
 	print("Finished loading embeddings. Time taken: %.2f seconds."%(time.time()-start))
@@ -281,4 +282,6 @@ if __name__ == "__main__":
 	args = parser.parse_args()	
 
 	# test_get_minibatches(args.abs_dir_tok, args.lda_topics, args.lda_assignments, batch_size=1000, shuffle=True)
-	test_pad_abstracts(args.abs_dir_tok, args.embeddings, max_length=300)
+	# test_pad_abstracts(args.abs_dir_tok, args.embeddings, max_length=300)
+	vocab, embeddings = load_embeddings_array(args.embeddings, num_embed=200000)
+	print(embeddings.shape)

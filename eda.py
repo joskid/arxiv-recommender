@@ -55,7 +55,7 @@ def visualize_words(embed_dict, num_words, use_prev):
 	else:
 		start = time.time()
 		print("Performing t-SNE dimensionality reduction on word embeddings.")
-		lowDim = TSNE(n_components=2, n_iter=2000, early_exaggeration=20.0).fit_transform(embeddings[:num_words])
+		lowDim = TSNE(n_components=2, n_iter=2000, early_exaggeration=12.0).fit_transform(embeddings[:num_words])
 		print("Finished t-SNE. Time taken: %.2f seconds."%(time.time()-start))
 		np.savetxt("tsne", lowDim, delimiter=" ")
 	assert lowDim.shape[0] == num_words, "Loaded t-SNE vectors calculated for a different number of words."
@@ -71,12 +71,13 @@ def visualize_words(embed_dict, num_words, use_prev):
 
 if __name__ == "__main__":
 	# load vocabulary and counts
+	print("Loading vocabulary and counts...")
 	vocab = load_vocab("glove/vocab.txt")
 	# obtain fifty most frequent tokens
 	top50 = get_top_fifty(vocab, print_mat=False)
 	# plot frequent tokens and counts
-	# plot_counts(top50, np.array([8, 10, 16, 19, 26, 27, 29, 32, 35, 37]))
+	plot_counts(top50, np.array([11, 12, 13, 15, 26, 27, 28, 29, 33, 35]))
 	# load pre-trained GloVe word embeddings
 	embeddings = load_embeddings("glove/embeddings.txt")
 	# visualize word similarities using t-SNE
-	visualize_words(embeddings, num_words=1000, use_prev=True)
+	visualize_words(embeddings, num_words=1000, use_prev=False)

@@ -45,19 +45,19 @@ def get_titles(db_file, fnames, center, neighbors, exclude_center=True):
 	else:
 		neighbors = neighbors[0]
 	print("======================================================================================")
-	print("Nearest neighbors for paper titled: \n%s" % " ".join(center_title.split()))
+	print("Getting nearest neighbors for paper titled: \n%s (%s)" % (" ".join(center_title.split()), fnames[center]))
 	print("--------------------------------------------------------------------------------------")
 	for i, neighbor in enumerate(neighbors):
 		neighbor_info = db[fnames[neighbor]]
 		neighbor_title = neighbor_info["title"]
-		print("Closest neighbor no. %i:\n\t %s" % (i+1, " ".join(neighbor_title.split())))
+		print("Closest neighbor no. %i:\n\t %s (%s)" % (i+1, " ".join(neighbor_title.split()), fnames[neighbor]))
 
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser()
 	parser.add_argument("--db-name", type=str, default="db.p", help="Path to and name of database pickle.")
 	parser.add_argument("--abs-dir-tok", type=str, default="data/abstracts_tokenized", help="Directory that stores tokenized abstracts.")
 	parser.add_argument("--hidden-states", type=str, default="hidden_states", help="Text file that stores the hidden states output by rnn.py.")
-	parser.add_argument("--num-neighbors", type=int, default=5, help="Number of nearest neighbors to find.")
+	parser.add_argument("--num-neighbors", type=int, default=10, help="Number of nearest neighbors to find.")
 	parser.add_argument("--center-index", type=int, help="Index of abstract whose nearest neighbors we want to obtain.")
 	args = parser.parse_args()
 

@@ -14,10 +14,10 @@ class Config:
 	the variables in Config should use self.config.variable_name.
 	"""
 	num_epochs = 20
-	batch_size = 128
-	num_classes = 10
-	embed_size = 200
-	max_length = 200
+	batch_size = 80
+	num_classes = 20
+	embed_size = 300
+	max_length = 300
 	hidden_size = 300
 	learning_rate = 0.001
 	dropout_rate = 0.5
@@ -64,7 +64,7 @@ class RNN():
 		"""	
 		Adds the embedding layer that maps from the vectorized abstracts to word embeddings.
 		"""
-		embedding_tensor = tf.Variable(self.pretrained_embeddings)
+		embedding_tensor = tf.Variable(self.pretrained_embeddings, trainable=False)
 		lookup = tf.nn.embedding_lookup(embedding_tensor, self.abstracts_placeholder)
 		return lookup
 
@@ -132,7 +132,7 @@ class RNN():
 		states = sess.run(self.states, feed_dict)
 		return np.array(states)
 
-def preprocess_data(topics_file, labels_file, abstracts_file, embeddings_file, max_length):
+def preprocess_data(topics_file, labels_file, abstracts_file, embeddings_file, max_embed, max_length):
 	"""
 	Helper function to load and preprocess data for the RNN. Returns the padded, vectorized
 	abstracts, along with their unpadded lengths, the LDA labels, and word embeddings.
@@ -142,7 +142,7 @@ def preprocess_data(topics_file, labels_file, abstracts_file, embeddings_file, m
 	# load tokenized abstracts and file names into memory (as lists)
 	fnames, abstracts = load_abstracts(abstracts_file)
 	# load pre-trained embeddings and vocabulary into memory (as arrays)
-	vocab, embeddings = load_embeddings_array(embeddings_file)
+	vocab, embeddings = load_embeddings_array(embeddings_file, max_embed)
 	# pad abstracts, and add <NULL> token to vocabulary and word embeddings
 	new_abstracts, orig_lengths, new_vocab, new_embeddings = pad_abstracts(abstracts, vocab, embeddings, max_length)
 	# vectorize abstracts
@@ -184,7 +184,7 @@ def train(abstracts, lengths, labels, embeddings):
 				loss = rnn.train_on_batch(session, *batch)
 				losses.append(loss)
 				prog.update(i+1, [("Loss", loss)])
-				save_path = saver.save(session, "./weights/model2")
+				save_path = saver.save(session, "./weights/train")
 			save_loss(losses)
 	print("\n\n===============================================================\n")		
 
@@ -192,7 +192,7 @@ def save_loss(losses):
 	"""
 	Writes the training losses to a text file.
 	"""
-	with open("training_loss2", "a") as f:
+	with open("training_loss", "a") as f:
 		for loss in losses:
 			f.write("%s " % str(loss))
 		f.write("\n")
@@ -215,7 +215,7 @@ def predict(abstracts, lengths, labels, embeddings, get_states=False):
 	saver = tf.train.Saver()
 	
 	with tf.Session() as session:
-		saver.restore(session, "./weights/model1")
+		saver.restore(session, "./weights/train")
 		out = requested_op(session, abstracts, lengths)
 	
 	if get_states:
@@ -238,7 +238,7 @@ def get_all_states(abstracts, lengths, labels, embeddings):
 	states = np.empty(shape=(0, config.hidden_size), dtype=float)
 
 	with tf.Session() as session:
-		saver.restore(session, "./weights/model1")
+		saver.restore(session, "./weights/train")
 		prog = Progbar(target=1 + len(labels)/config.batch_size)
 		for i, batch in enumerate(get_minibatches(abstracts, lengths, labels, config.batch_size, shuffle=False)):
 			batch_states = rnn.get_states_on_batch(session, batch[0], batch[1])
@@ -258,17 +258,27 @@ if __name__ == "__main__":
 	start = time.time()
 	# get command line arguments
 	parser = argparse.ArgumentParser()
-	parser.add_argument("--lda-topics", type=str, default="lda_topics_final", help="lda_topics file")
-	parser.add_argument("--lda-assignments", type=str, default="lda_assignments_final", help="lda_assignments file")
+	parser.add_argument("--lda-topics", type=str, default="lda_topics", help="lda_topics file")
+	parser.add_argument("--lda-assignments", type=str, default="lda_assignments", help="lda_assignments file")
 	parser.add_argument("--abs-dir-tok", type=str, default="data/abstracts_tokenized", help="Directory that stores tokenized abstracts.")
 	parser.add_argument("--embeddings", type=str, default="glove/embeddings.txt", help="Path to pre-trained word embeddings.")
-	parser.add_argument("--max-length", type=int, default=200, help="Maximum abstract length.")
+	parser.add_argument("--max-embed", type=int, default=150000, help="Maximum number of embeddings to load.")
+	parser.add_argument("--max-length", type=int, help="Maximum abstract length.")
+	parser.add_argument("--train", action="store_true", default=False, help="Train on training set and evaluate on validation set.")
+	parser.add_argument("--train-all", action="store_true", default=False, help="Train on all available abstracts and LSTM hidden states.")
 	args = parser.parse_args()	
 
-	abstracts, lengths, labels, embeddings = preprocess_data(args.lda_topics, args.lda_assignments, args.abs_dir_tok, args.embeddings, args.max_length)
-	train_set, validation_set = split_data(abstracts, lengths, labels)
-	# train(*train_set, embeddings)
-	# states = predict(*validation_set, embeddings, get_states=True)
-	states = get_all_states(abstracts, lengths, labels, embeddings)
-	save_states(states)
+	if not (args.train or args.train_all):
+		raise ValueError("Please include either '--train' or '--train-all' as a command line argument.")
+	abstracts, lengths, labels, embeddings = preprocess_data(args.lda_topics, args.lda_assignments, args.abs_dir_tok, 
+													args.embeddings, args.max_embed, args.max_length)
+	if args.train:
+		train_set, validation_set = split_data(abstracts, lengths, labels, train_ratio=0.9)
+		train(*train_set, embeddings)
+		accuracy = predict(*validation_set, embeddings)
+		print("Accuracy on validation set is: .2f" % accuracy)
+	elif args.train_all:
+		#train(abstracts, lengths, labels, embeddings)
+		states = get_all_states(abstracts, lengths, labels, embeddings)
+		save_states(states)
 	print("Total time taken: %.2f" % (time.time()-start))

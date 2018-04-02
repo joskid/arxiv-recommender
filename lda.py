@@ -3,6 +3,7 @@
 
 import pickle
 import string
+from pprint import pprint
 from nltk.corpus import stopwords
 from gensim import corpora
 from gensim.models.ldamodel import LdaModel
@@ -25,8 +26,6 @@ def tokenize_abstracts(db, abs_dir, abs_dir_tok):
 		print("Running abstracts.sh ... (this will take a while)")
 		os.system("./abstracts.sh")
 		print("Created tokenized abstracts in %s. Time taken: %.2f seconds."%(abs_dir_tok, time.time()-start))
-	# load tokenized abstracts into memory as a list
-	return load_abstracts(abs_dir_tok)
 
 def create_corpus(tokenized_abstracts):
 	"""
@@ -65,7 +64,7 @@ def LDA(corpus, dictionary, numTopics):
 		else:
 			main_topic = max(assignment, key=lambda item:item[1])
 			assigned_topics.append(main_topic[0])
-	return(lda.show_topics(), assigned_topics)
+	return(lda.show_topics(num_topics=-1), assigned_topics)
 
 if __name__ == "__main__":
 	
@@ -74,17 +73,19 @@ if __name__ == "__main__":
 	parser.add_argument("--db-name", type=str, default="db.p", help="Path to and name of database pickle.")
 	parser.add_argument("--abs-dir", type=str, default="data/abstracts/", help="Directory to store extracted abstracts in.")
 	parser.add_argument("--abs-dir-tok", type=str, default="data/abstracts_tokenized", help="Directory that stores tokenized abstracts.")
-	parser.add_argument("--num-topics", type=int, default=10, help="Number of LDA topics.")
+	parser.add_argument("--num-topics", type=int, default=20, help="Number of LDA topics.")
 	args = parser.parse_args()
 	
-	# load existing database into memory
+	# load existing database into memory and tokenize abstracts
 	db = pickle.load(open(args.db_name, "rb"))
+	tokenize_abstracts(db, args.abs_dir, args.abs_dir_tok)
 	# obtain list of tokenized abstracts along with filenames
-	fnames, abstracts = tokenize_abstracts(db, args.abs_dir, args.abs_dir_tok)
+	fnames, abstracts = load_abstracts(args.abs_dir_tok)
 	# create gensim corpus for LDA modelling
 	corpus, bow = create_corpus(abstracts)
 	# obtain fitted topics and assigned topic for each abstract
 	topics, assignments = LDA(corpus, bow, args.num_topics)
+	pprint(topics)
 	# write to text files
 	with open("lda_topics", "w+") as f:
 		for _, topic in topics:
