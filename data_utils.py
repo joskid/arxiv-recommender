@@ -38,7 +38,7 @@ def load_embeddings_array(fpath, num_embed):
 	vocabulary and vectors in separate arrays. 
 	"""
 	start = time.time()
-	print("Loading pre-trained GloVe word embeddings.")
+	print("Loading pre-trained GloVe word embeddings...")
 	vocab = []
 	embeddings = []
 	f = open(fpath)
@@ -155,7 +155,8 @@ def get_minibatches(abstracts, lengths, labels, batch_size, shuffle=True):
 	if shuffle: np.random.shuffle(indices)
 	# break up indices into slices of @batch_size each, and return generator
 	for start_index in np.arange(0, num_abstracts, batch_size):
-		yield abstracts[start_index:(start_index+batch_size)], lengths[start_index:(start_index+batch_size)], labels[start_index:(start_index+batch_size)]
+		batch_indices = indices[start_index:(start_index+batch_size)]
+		yield abstracts[batch_indices], lengths[batch_indices], labels[batch_indices]
 
 def test_get_minibatches(abs_file, topics_file, labs_file, batch_size, shuffle=True):
 	"""
@@ -275,8 +276,8 @@ class Progbar(object):
 
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser()
-	parser.add_argument("--lda-topics", type=str, default="lda_topics_final", help="lda_topics file")
-	parser.add_argument("--lda-assignments", type=str, default="lda_assignments_final", help="lda_assignments file")
+	parser.add_argument("--lda-topics", type=str, default="lda_topics", help="lda_topics file")
+	parser.add_argument("--lda-assignments", type=str, default="lda_assignments", help="lda_assignments file")
 	parser.add_argument("--abs-dir-tok", type=str, default="data/abstracts_tokenized", help="Directory that stores tokenized abstracts.")
 	parser.add_argument("--embeddings", type=str, default="glove/embeddings.txt", help="Path to pre-trained word embeddings.")
 	args = parser.parse_args()	

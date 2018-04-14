@@ -33,10 +33,10 @@ def plot_counts(top_fifty, indices):
 	"""
 	plot_df = pd.DataFrame(data=top_fifty[indices])	
 	plot_df.columns = ["rank", "token", "count"]
-	ax = plot_df.plot.bar(x="token", y="count", color='blue', legend=None, figsize=(8, 4))
-	ax.set_xlabel("Token", fontsize=14); ax.set_ylabel("Count", fontsize=14)
+	ax = plot_df.plot.bar(x="token", y="count", color='blue', legend=None, figsize=(8, 3))
+	ax.set_xlabel("Token", fontsize=14); ax.set_ylabel("Count", fontsize=12)
 	plt.setp(ax.xaxis.get_majorticklabels(), rotation=45)
-	plt.gcf().subplots_adjust(bottom=0.25)
+	plt.gcf().tight_layout()
 	plt.show()
 
 def visualize_words(embed_dict, num_words, use_prev):
@@ -66,7 +66,7 @@ def visualize_words(embed_dict, num_words, use_prev):
 	# annotate plotted vectors using token names
 	for i, word in enumerate(list(embed_dict.keys())[:num_words]):
 		plt.annotate(word, xy = (lowDim[i, 0], lowDim[i, 1]), xytext=(3, 3),
-					 textcoords="offset points")
+					 textcoords="offset points", fontsize=17)
 	plt.show()
 
 if __name__ == "__main__":

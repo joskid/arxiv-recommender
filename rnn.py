@@ -13,14 +13,15 @@ class Config:
 	RNN objects are passed a Config() object at instantiation, so any call to
 	the variables in Config should use self.config.variable_name.
 	"""
-	num_epochs = 20
-	batch_size = 80
+	num_epochs = 40
+	batch_size = 120
 	num_classes = 20
-	embed_size = 300
+	embed_size = 200
 	max_length = 300
 	hidden_size = 300
-	learning_rate = 0.001
 	dropout_rate = 0.5
+	reg_strength = 0.0075
+	learning_rate = 0.001
 
 class RNN():
 	"""
@@ -76,7 +77,7 @@ class RNN():
 		"""
 		x = self.add_embedding_op()
 		batch_size = tf.shape(x)[0]
-		cell = tf.nn.rnn_cell.BasicLSTMCell(self.config.hidden_size)
+		cell = tf.nn.rnn_cell.BasicLSTMCell(self.config.hidden_size, reuse=tf.AUTO_REUSE)
 		init_state = tf.nn.rnn_cell.LSTMStateTuple(tf.zeros(shape=(batch_size, self.config.hidden_size), dtype=tf.float64),
 					  							   tf.zeros(shape=(batch_size, self.config.hidden_size), dtype=tf.float64))
 
@@ -91,10 +92,13 @@ class RNN():
 
 	def add_loss_op(self, logits):
 		"""
-		Adds the final layer that computes the cross entropy loss, assuming that class
+		Adds the final layer that computes the cross entropy plus L2 regularization loss, assuming that class
 		probabilities are calculated using a softmax function.
 		"""
-		loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self.labels_placeholder, logits=logits))
+		# weights[2] is the LSTM bias units so ignore
+		weights = tf.trainable_variables()
+		loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self.labels_placeholder, logits=logits)) \
+						+ self.config.reg_strength*(tf.reduce_mean(tf.nn.l2_loss(weights[0])) + tf.reduce_mean(tf.nn.l2_loss(weights[1])))
 		return loss
 
 	def add_training_op(self, loss):
@@ -102,7 +106,7 @@ class RNN():
 		Creates the training operation, in the form of an AdamOptimizer object that minimizes
 		the cross entropy loss returned by add_loss_op().
 		"""
-		optimizer = tf.train.AdamOptimizer(learning_rate=self.config.learning_rate)
+		optimizer = tf.train.AdamOptimizer(learning_rate=self.config.learning_rate, beta1=0.9, beta2=0.99)
 		return optimizer.minimize(loss)
 
 	def train_on_batch(self, sess, abstracts_batch, lengths_batch, labels_batch):
@@ -132,24 +136,32 @@ class RNN():
 		states = sess.run(self.states, feed_dict)
 		return np.array(states)
 
-def preprocess_data(topics_file, labels_file, abstracts_file, embeddings_file, max_embed, max_length):
+def preprocess_data(topics_file, labels_file, abstracts_dir, embeddings_file, max_embed, max_length):
 	"""
 	Helper function to load and preprocess data for the RNN. Returns the padded, vectorized
 	abstracts, along with their unpadded lengths, the LDA labels, and word embeddings.
 	"""
 	# load LDA topics and abstract labels into memory (as lists)
 	topics, labels = load_labels(topics_file, labels_file)
+	# call next function to obtain the other data
+	vectorized_abstracts, orig_lengths, new_embeddings = process_test_data(abstracts_dir, embeddings_file, max_embed, max_length)
+	return(vectorized_abstracts, orig_lengths, labels, new_embeddings)
+
+def process_test_data(test_dir, embeddings_file, max_embed, max_length):
+	"""
+	Helper function to load, pad, and vectorize the test abstract(s).
+	"""
 	# load tokenized abstracts and file names into memory (as lists)
-	fnames, abstracts = load_abstracts(abstracts_file)
+	fnames, abstracts = load_abstracts(test_dir)
 	# load pre-trained embeddings and vocabulary into memory (as arrays)
 	vocab, embeddings = load_embeddings_array(embeddings_file, max_embed)
 	# pad abstracts, and add <NULL> token to vocabulary and word embeddings
 	new_abstracts, orig_lengths, new_vocab, new_embeddings = pad_abstracts(abstracts, vocab, embeddings, max_length)
-	# vectorize abstracts
+	# vectorize abstracts_batch
 	vectorized_abstracts = vectorize_abstracts(new_abstracts, new_vocab)
-	return(vectorized_abstracts, orig_lengths, labels, new_embeddings)
+	return(vectorized_abstracts, orig_lengths, new_embeddings)
 
-def split_data(abstracts, lengths, labels, train_ratio=0.9):
+def split_data(abstracts, lengths, labels, train_ratio):
 	"""
 	Shuffles and splits the available data into training and validation sets.
 	"""
@@ -164,9 +176,11 @@ def split_data(abstracts, lengths, labels, train_ratio=0.9):
 	val_set =(abstracts[val_indices], lengths[val_indices], labels[val_indices])
 	return(train_set, val_set)
 
-def train(abstracts, lengths, labels, embeddings):
+def train(abstracts, lengths, labels, embeddings, 
+					val_abstracts=None, val_lengths=None, val_labels=None, predict=False):
 	"""
-	Main loop that implements the training over all epochs.
+	Main loop that implements the training over all epochs. If @predict is set to True,
+	also computes the training and validation accuracies during training.
 	"""
 	config = Config()
 	rnn = RNN(config, embeddings)
@@ -180,22 +194,55 @@ def train(abstracts, lengths, labels, embeddings):
 			print("\nTraining epoch number %i of %i:" % (epoch+1, config.num_epochs))
 			prog = Progbar(target=1 + len(labels)/config.batch_size)
 			losses = []
+			if predict:
+				train_accuracies = []
+				val_accuracies = []
 			for i, batch in enumerate(get_minibatches(abstracts, lengths, labels, config.batch_size)):
 				loss = rnn.train_on_batch(session, *batch)
 				losses.append(loss)
 				prog.update(i+1, [("Loss", loss)])
 				save_path = saver.save(session, "./weights/train")
+				if predict and (((i+1)%15) == 0):
+					train_accuracies.append(predict_during_training(rnn, session, *batch))
+					val_accuracies.append(predict_during_training(rnn, session, val_abstracts, val_lengths, val_labels))
 			save_loss(losses)
+			save_accuracies(train_accuracies, val_accuracies)
 	print("\n\n===============================================================\n")		
 
 def save_loss(losses):
 	"""
 	Writes the training losses to a text file.
 	"""
-	with open("training_loss", "a") as f:
+	if not os.path.exists("./training"):
+		os.makedirs("./training")
+	with open("./training/loss", "a") as f:
 		for loss in losses:
 			f.write("%s " % str(loss))
 		f.write("\n")
+
+def save_accuracies(train_acc, val_acc):
+	"""
+	Writes the training and validation accuracies to two separate text files.
+	"""
+	with open("./training/train_acc", "a") as f:
+		for acc in train_acc:
+			f.write("%s " %str(acc))
+		f.write("\n")
+	with open("./training/val_acc", "a") as f:
+		for acc in val_acc:
+			f.write("%s " %str(acc))
+		f.write("\n")
+
+def predict_during_training(model, session, abstracts, lengths, labels):
+	"""
+	Helper function to make a prediction on the training or validation set
+	during training.
+	"""
+	out = []
+	for i, batch in enumerate(get_minibatches(abstracts, lengths, labels, model.config.batch_size, shuffle=False)):
+		out.extend(model.predict_on_batch(session, batch[0], batch[1]))
+	accuracy = np.mean(out == labels)
+	return accuracy
 
 def predict(abstracts, lengths, labels, embeddings, get_states=False):
 	"""
@@ -213,21 +260,43 @@ def predict(abstracts, lengths, labels, embeddings, get_states=False):
 	else:
 		requested_op = rnn.predict_on_batch
 	saver = tf.train.Saver()
-	
+	out = []
+
 	with tf.Session() as session:
 		saver.restore(session, "./weights/train")
-		out = requested_op(session, abstracts, lengths)
-	
+		prog = Progbar(target=1 + len(labels)/config.batch_size)
+		for i, batch in enumerate(get_minibatches(abstracts, lengths, labels, config.batch_size, shuffle=False)):
+			out.extend(requested_op(session, batch[0], batch[1]))
+			prog.update(i+1)
+	print("\n")
+
 	if get_states:
 		return out
 	else:
 		accuracy = np.mean(out == labels)
 		return accuracy
 
+def get_states(abstracts, lengths, embeddings):
+	"""
+	Uses the trained model weights to obtain the final hidden state vector
+	of the RNN for test abstracts.
+	"""
+	tf.reset_default_graph()
+	print("Getting hidden state for test abstract(s)...")
+	config = Config()
+	rnn = RNN(config, embeddings)
+	saver = tf.train.Saver()
+	
+	with tf.Session() as session:
+		saver.restore(session, "./weights/train")
+		states = rnn.get_states_on_batch(session, abstracts, lengths)
+
+	return(states)
+
 def get_all_states(abstracts, lengths, labels, embeddings):
 	"""
 	Uses the trained model weights to obtain the final hidden state vector
-	of the RNN for all abstracts. Differs from the predict() function in the
+	of the RNN for all training abstracts. Differs from the predict() function in the
 	use of a generator here to prevent out-of-memory issues.
 	"""
 	tf.reset_default_graph()
@@ -262,23 +331,34 @@ if __name__ == "__main__":
 	parser.add_argument("--lda-assignments", type=str, default="lda_assignments", help="lda_assignments file")
 	parser.add_argument("--abs-dir-tok", type=str, default="data/abstracts_tokenized", help="Directory that stores tokenized abstracts.")
 	parser.add_argument("--embeddings", type=str, default="glove/embeddings.txt", help="Path to pre-trained word embeddings.")
-	parser.add_argument("--max-embed", type=int, default=150000, help="Maximum number of embeddings to load.")
-	parser.add_argument("--max-length", type=int, help="Maximum abstract length.")
+	parser.add_argument("--max-embed", type=int, default=209126, help="Maximum number of embeddings to load.")
+	parser.add_argument("--max-length", type=int, default=300, help="Maximum abstract length.")
 	parser.add_argument("--train", action="store_true", default=False, help="Train on training set and evaluate on validation set.")
 	parser.add_argument("--train-all", action="store_true", default=False, help="Train on all available abstracts and LSTM hidden states.")
+	parser.add_argument("--test", action="store_true", default=False, help="Get hidden states for test abstracts.")
+	parser.add_argument("--test-dir", type=str, default="data/test/", help="Directory containing the test abstracts.")
 	args = parser.parse_args()	
 
-	if not (args.train or args.train_all):
+	if not (args.train or args.train_all or args.test):
 		raise ValueError("Please include either '--train' or '--train-all' as a command line argument.")
-	abstracts, lengths, labels, embeddings = preprocess_data(args.lda_topics, args.lda_assignments, args.abs_dir_tok, 
-													args.embeddings, args.max_embed, args.max_length)
+
 	if args.train:
+		abstracts, lengths, labels, embeddings = preprocess_data(args.lda_topics, args.lda_assignments, args.abs_dir_tok, 
+														args.embeddings, args.max_embed, args.max_length)
 		train_set, validation_set = split_data(abstracts, lengths, labels, train_ratio=0.9)
-		train(*train_set, embeddings)
-		accuracy = predict(*validation_set, embeddings)
-		print("Accuracy on validation set is: .2f" % accuracy)
+		train(*train_set, embeddings, *validation_set, predict=True)
+		# accuracy = predict(*validation_set, embeddings)
+		# print("Accuracy on validation set is: %.2f" % accuracy)
 	elif args.train_all:
-		#train(abstracts, lengths, labels, embeddings)
+		abstracts, lengths, labels, embeddings = preprocess_data(args.lda_topics, args.lda_assignments, args.abs_dir_tok, 
+														args.embeddings, args.max_embed, args.max_length)
+		# train(abstracts, lengths, labels, embeddings)
 		states = get_all_states(abstracts, lengths, labels, embeddings)
 		save_states(states)
+	elif args.test:
+		os.system("bash ./test.sh")
+		abstracts, lengths, embeddings = process_test_data(args.test_dir + "/tokenized", args.embeddings, args.max_embed, args.max_length)
+		states = get_states(abstracts, lengths, embeddings)
+		np.savetxt("hidden_states_test", states, delimiter=" ")
+
 	print("Total time taken: %.2f" % (time.time()-start))
